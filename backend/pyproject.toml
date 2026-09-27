@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vocab-collect"
+version = "0.1.0"
+description = "Self-hosted vocabulary collection and spaced repetition app"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.14,<2",
+  "fastapi>=0.115,<1",
+  "fsrs[optimizer]>=6,<7",
+  "httpx>=0.28,<1",
+  "morphoneme>=0.1.4,<1",
+  "pydantic-settings>=2.7,<3",
+  "pwdlib[argon2]>=0.2,<1",
+  "python-multipart>=0.0.20,<1",
+  "rapidfuzz>=3.12,<4",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.34,<1",
+  "wn>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+

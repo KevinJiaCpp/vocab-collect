@@ -1,0 +1,3 @@
+# Normalize line endings: store LF in the repository and check out LF on every platform.
+# This overrides each contributor's core.autocrlf so Windows, macOS and Linux agree.
+* text=auto eol=lf
