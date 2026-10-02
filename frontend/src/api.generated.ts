@@ -90,6 +90,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/llm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Llm Settings */
+        get: operations["get_llm_settings_api_settings_llm_get"];
+        /** Update Llm Settings */
+        put: operations["update_llm_settings_api_settings_llm_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lists": {
         parameters: {
             query?: never;
@@ -282,6 +300,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/words/{word}/lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Word Lists */
+        get: operations["word_lists_api_words__word__lists_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/dictionary/search": {
         parameters: {
             query?: never;
@@ -328,6 +363,40 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dictionary/{word}/examples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dictionary Examples */
+        post: operations["dictionary_examples_api_dictionary__word__examples_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dictionary/{word}/examples/{sense_index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Clear Dictionary Examples */
+        delete: operations["clear_dictionary_examples_api_dictionary__word__examples__sense_index__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -539,10 +608,41 @@ export interface components {
             /** Word */
             word: string;
         };
+        /** ExampleSentencesInput */
+        ExampleSentencesInput: {
+            /** Sense Index */
+            sense_index: number;
+        };
+        /** ExampleSentencesOutput */
+        ExampleSentencesOutput: {
+            /** Examples */
+            examples: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** LLMSettingsInput */
+        LLMSettingsInput: {
+            /**
+             * Base Url
+             * Format: uri
+             */
+            base_url: string;
+            /** Model */
+            model: string;
+            /** Api Key */
+            api_key?: string | null;
+        };
+        /** LLMSettingsOutput */
+        LLMSettingsOutput: {
+            /** Base Url */
+            base_url: string;
+            /** Model */
+            model: string;
+            /** Has Api Key */
+            has_api_key: boolean;
         };
         /** NoteInput */
         NoteInput: {
@@ -815,6 +915,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_settings_api_settings_llm_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMSettingsOutput"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_llm_settings_api_settings_llm_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LLMSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMSettingsOutput"];
                 };
             };
             /** @description Validation Error */
@@ -1371,6 +1537,39 @@ export interface operations {
             };
         };
     };
+    word_lists_api_words__word__lists_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                word: string;
+            };
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dictionary_search_api_dictionary_search_get: {
         parameters: {
             query: {
@@ -1460,6 +1659,75 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dictionary_examples_api_dictionary__word__examples_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                word: string;
+            };
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExampleSentencesInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExampleSentencesOutput"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_dictionary_examples_api_dictionary__word__examples__sense_index__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                word: string;
+                sense_index: number;
+            };
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

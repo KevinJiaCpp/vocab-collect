@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Ban, CheckCircle2, Eye, Flag, Keyboard, Volume2 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, json } from '../api'
-import { Button, ErrorNotice, Loading, Modal, Panel, Tag } from '../components'
+import { Button, ErrorNotice, Loading, Panel, Tag } from '../components'
 import type { DictionaryEntry, Direction, Sense, SessionSummary } from '../types'
 
 type StudyResponse = {
@@ -29,13 +29,12 @@ export default function StudyPage() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
   const client = useQueryClient()
-  const [showExit, setShowExit] = useState(false)
   const startedAt = useRef(Date.now())
   const study = useQuery({ queryKey: ['study-session', sessionId], queryFn: () => api<StudyResponse>(`/study/sessions/${sessionId}/next`), enabled: !!sessionId })
+  useEffect(() => { client.removeQueries({ queryKey: ['study-overview'] }) }, [client])
   useEffect(() => { startedAt.current = Date.now() }, [study.data?.presentation_token])
   const reveal = useMutation({ mutationFn: () => api<StudyResponse>(`/study/sessions/${sessionId}/reveal`, json('POST', { presentation_token: study.data?.presentation_token })), onSuccess: data => client.setQueryData(['study-session', sessionId], data) })
   const answer = useMutation({ mutationFn: (rating: number) => api<{ session: SessionSummary }>(`/study/sessions/${sessionId}/answer`, json('POST', { presentation_token: study.data?.presentation_token, rating, duration_ms: Date.now() - startedAt.current })), onSuccess: async data => { client.invalidateQueries({ queryKey: ['study-overview'] }); client.invalidateQueries({ queryKey: ['dashboard'] }); if (data.session.status === 'completed') client.setQueryData(['study-session', sessionId], { session: data.session, item: null }); else await study.refetch() } })
-  const abandon = useMutation({ mutationFn: () => api(`/study/sessions/${sessionId}/abandon`, { method: 'POST' }), onSuccess: () => { client.invalidateQueries({ queryKey: ['study-overview'] }); navigate('/') } })
   const exclude = useMutation({ mutationFn: ({ status }: { status: 'familiar' | 'useless' }) => api<SessionSummary>(`/study/sessions/${sessionId}/skip`, json('POST', { presentation_token: study.data?.presentation_token, status })), onSuccess: async data => { client.invalidateQueries({ queryKey: ['study-overview'] }); if (data.status === 'completed') client.setQueryData(['study-session', sessionId], { session: data, item: null }); else await study.refetch() } })
 
   useEffect(() => {
@@ -55,7 +54,7 @@ export default function StudyPage() {
   const progress = Math.min(100, Math.round(data.session.completed_count / Math.max(1, data.session.target_count) * 100))
 
   return <div className="study-page">
-    <header className="study-header"><button className="back-button" onClick={() => setShowExit(true)}><ArrowLeft size={20} /> Exit</button><div><strong>{data.session.kind === 'learning' ? 'Learning' : 'Review'}</strong><span>{data.session.direction === 'w2m' ? 'Word → meaning' : 'Meaning → word'}</span></div><span>{data.session.completed_count} / {data.session.target_count}</span></header>
+    <header className="study-header"><button className="back-button" onClick={() => navigate('/')}><ArrowLeft size={20} /> Exit</button><div><strong>{data.session.kind === 'learning' ? 'Learning' : 'Review'}</strong><span>{data.session.direction === 'w2m' ? 'Word → meaning' : 'Meaning → word'}</span></div><span>{data.session.completed_count} / {data.session.target_count}</span></header>
     <div className="session-progress"><div style={{ width: `${progress}%` }} /></div>
     <main className="study-workspace">
       <section className={`study-card ${data.revealed ? 'revealed' : ''}`}>
@@ -67,7 +66,6 @@ export default function StudyPage() {
       <div className="study-secondary-actions"><button onClick={() => exclude.mutate({ status: 'familiar' })}><Flag size={17} /> I already know this</button><button onClick={() => exclude.mutate({ status: 'useless' })}><Ban size={17} /> Not useful to me</button><span><Keyboard size={16} /> Space to reveal · 1–4 to grade</span></div>
       {(reveal.error || answer.error || exclude.error) && <ErrorNotice error={reveal.error || answer.error || exclude.error} />}
     </main>
-    {showExit && <Modal title="Leave this session?" onClose={() => setShowExit(false)}><p>Your place is saved if you return home. Abandoning ends the session but keeps every review already completed.</p><div className="modal-actions"><Button variant="ghost" onClick={() => navigate('/')}>Save & leave</Button><Button variant="danger" onClick={() => abandon.mutate()}>Abandon session</Button></div></Modal>}
   </div>
 }
 

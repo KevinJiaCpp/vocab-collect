@@ -1,13 +1,15 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Check, Download, FileUp, MoreHorizontal, Plus, Search, Shuffle, Trash2, X } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, Download, FileUp, MoreHorizontal, Plus, Search, Shuffle, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { api, downloadUrl, json } from '../api'
 import { Button, Empty, ErrorNotice, IconButton, Loading, Modal, PageHeader, Panel, Segmented, Tag } from '../components'
 import type { ListDirection, WordList } from '../types'
 
 type Tab = 'lists' | 'learned' | 'notes'
 type LearnedWord = { word: string; normalized_word: string; status: 'active' | 'familiar' | 'useless'; cards: { direction: string; state: number; due: string }[] }
+type LearnedFilters = { status: LearnedWord['status'] | 'all'; direction: 'uni' | 'bi' | 'all'; stage: '0' | '1' | '2' | '3' | 'all' }
 type Note = { word: string; normalized_word: string; body: string; updated_at: string }
+const defaultLearnedFilters: LearnedFilters = { status: 'all', direction: 'all', stage: 'all' }
 
 export default function CollectionPage() {
   const [tab, setTab] = useState<Tab>('lists')
@@ -65,11 +67,75 @@ function ListDetail({ list, refresh, onPatch, onShuffle, onDelete }: { list: Wor
 function LearnedView() {
   const client = useQueryClient()
   const [q, setQ] = useState('')
+  const [filters, setFilters] = useState<LearnedFilters>(defaultLearnedFilters)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [filterPlacement, setFilterPlacement] = useState({ above: false, maxHeight: 520 })
+  const filterRoot = useRef<HTMLDivElement>(null)
   const query = useQuery({ queryKey: ['learned', q], queryFn: () => api<LearnedWord[]>(`/words/learned?q=${encodeURIComponent(q)}`) })
   const status = useMutation({ mutationFn: ({ word, value }: { word: string; value: LearnedWord['status'] }) => api(`/words/${encodeURIComponent(word)}/status`, json('PUT', { status: value })), onSuccess: () => { client.invalidateQueries({ queryKey: ['learned'] }); client.invalidateQueries({ queryKey: ['study-overview'] }) } })
+  useEffect(() => {
+    if (!filterOpen) return
+    const placeFilter = () => {
+      const bounds = filterRoot.current?.getBoundingClientRect()
+      if (!bounds) return
+      const below = window.innerHeight - bounds.bottom - (window.innerWidth <= 650 ? 98 : 26)
+      const above = bounds.top - 26
+      const placeAbove = below < 240 && above > below
+      setFilterPlacement({ above: placeAbove, maxHeight: Math.max(140, Math.min(520, placeAbove ? above : below)) })
+    }
+    placeFilter()
+    filterRoot.current?.querySelector<HTMLInputElement>('.learned-filter-popover input')?.focus()
+    const closeOutside = (event: PointerEvent | FocusEvent) => {
+      if (event.target instanceof Node && !filterRoot.current?.contains(event.target)) setFilterOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setFilterOpen(false); filterRoot.current?.querySelector<HTMLButtonElement>('.learned-filter-button')?.focus() }
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('focusin', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('resize', placeFilter)
+    window.addEventListener('scroll', placeFilter, { passive: true })
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('focusin', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('resize', placeFilter)
+      window.removeEventListener('scroll', placeFilter)
+    }
+  }, [filterOpen])
   if (query.isLoading) return <Loading label="Loading learned words" />
   if (query.error || !query.data) return <ErrorNotice error={query.error} />
-  return <section className="collection-section"><div className="search-field"><Search size={19} /><input value={q} onChange={event => setQ(event.target.value)} placeholder="Search learned words" /></div>{status.error && <ErrorNotice error={status.error} />}{!query.data.length ? <Empty title="No learned words yet" detail="Words appear here as soon as they join your study queue." /> : <Panel className="table-panel"><div className="data-table">{query.data.map(item => <div className="data-row" key={item.normalized_word}><div><strong>{item.word}</strong><span>{item.cards.length ? `${item.cards.length} card${item.cards.length > 1 ? 's' : ''}` : 'Not studied yet'}</span></div><select aria-label={`Status for ${item.word}`} value={item.status} onChange={event => status.mutate({ word: item.word, value: event.target.value as LearnedWord['status'] })}><option value="active">Active</option><option value="familiar">Familiar</option><option value="useless">Useless</option></select></div>)}</div></Panel>}</section>
+  const activeFilterCount = Object.values(filters).filter(value => value !== 'all').length
+  const visible = query.data.filter(item => {
+    const forward = item.cards.some(card => card.direction === 'w2m')
+    const reverse = item.cards.some(card => card.direction === 'm2w')
+    return (filters.status === 'all' || item.status === filters.status) &&
+      (filters.direction === 'all' || (filters.direction === 'uni' ? forward && !reverse : forward && reverse)) &&
+      (filters.stage === 'all' || item.cards.some(card => card.state === Number(filters.stage)))
+  })
+
+  return <section className="collection-section">
+    <div className="learned-toolbar">
+      <div className="search-field"><Search size={19} /><input aria-label="Search learned words" value={q} onChange={event => setQ(event.target.value)} placeholder="Search learned words" /></div>
+      <div className="learned-filter-wrap" ref={filterRoot}>
+        <Button variant="secondary" className={`learned-filter-button ${activeFilterCount ? 'is-active' : ''}`} aria-expanded={filterOpen} aria-controls={filterOpen ? 'learned-word-filters' : undefined} onClick={() => setFilterOpen(open => !open)}><SlidersHorizontal size={18} /> Filters{activeFilterCount > 0 && <span className="learned-filter-count">{activeFilterCount}</span>}<ChevronDown size={16} className={filterOpen ? 'filter-chevron-open' : ''} /></Button>
+        {filterOpen && <div id="learned-word-filters" className={`learned-filter-popover ${filterPlacement.above ? 'above' : ''}`} style={{ maxHeight: filterPlacement.maxHeight }} role="region" aria-label="Learned word filters">
+          <div className="learned-filter-head"><div><strong>Refine words</strong><span>{visible.length} of {query.data.length} shown</span></div><IconButton label="Close filters" onClick={() => setFilterOpen(false)}><X size={18} /></IconButton></div>
+          <FilterOptions label="Word status" value={filters.status} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'familiar', label: 'Familiar' }, { value: 'useless', label: 'Useless' }]} onChange={value => setFilters(current => ({ ...current, status: value }))} />
+          <FilterOptions label="Recall directions" hint="Uni: word → meaning · Bi: both ways" value={filters.direction} options={[{ value: 'all', label: 'All' }, { value: 'uni', label: 'Uni direction' }, { value: 'bi', label: 'Bi direction' }]} onChange={value => setFilters(current => ({ ...current, direction: value }))} />
+          <FilterOptions label="Card stage" value={filters.stage} options={[{ value: 'all', label: 'All' }, { value: '0', label: 'New' }, { value: '1', label: 'Learning' }, { value: '2', label: 'Review' }, { value: '3', label: 'Relearning' }]} onChange={value => setFilters(current => ({ ...current, stage: value }))} />
+          <div className="learned-filter-foot"><button type="button" className="text-button" disabled={!activeFilterCount} onClick={() => setFilters(defaultLearnedFilters)}>Clear all</button><Button type="button" onClick={() => setFilterOpen(false)}>Done</Button></div>
+        </div>}
+      </div>
+    </div>
+    {status.error && <ErrorNotice error={status.error} />}
+    {!visible.length ? <Empty title={q || activeFilterCount ? 'No matching words' : 'No learned words yet'} detail={q || activeFilterCount ? 'Try another search or clear your filters.' : 'Words appear here once a study card is created.'} /> : <Panel className="table-panel"><div className="data-table">{visible.map(item => <div className="data-row" key={item.normalized_word}><div><strong>{item.word}</strong><span>{item.cards.length} card{item.cards.length > 1 ? 's' : ''}</span></div><select aria-label={`Status for ${item.word}`} value={item.status} onChange={event => status.mutate({ word: item.word, value: event.target.value as LearnedWord['status'] })}><option value="active">Active</option><option value="familiar">Familiar</option><option value="useless">Useless</option></select></div>)}</div></Panel>}
+  </section>
+}
+
+function FilterOptions<T extends string>({ label, hint, value, options, onChange }: { label: string; hint?: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+  return <fieldset className="learned-filter-group"><legend>{label}</legend><div className="learned-filter-options">{options.map(option => <label key={option.value} className={`learned-filter-option ${value === option.value ? 'selected' : ''}`}><input type="radio" name={label} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} /><span>{option.label}</span></label>)}</div>{hint && <p className="learned-filter-hint">{hint}</p>}</fieldset>
 }
 
 function NotesView() {

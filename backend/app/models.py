@@ -46,6 +46,24 @@ class StudySettings(Base):
     exclude_multiword_expressions: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class LLMSettings(Base):
+    __tablename__ = "llm_settings"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    base_url: Mapped[str] = mapped_column(String(2048))
+    model: Mapped[str] = mapped_column(String(200))
+    api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ExampleSentenceCache(Base):
+    __tablename__ = "example_sentence_cache"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    word: Mapped[str] = mapped_column(String(240), primary_key=True)
+    sense_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+
+
 class WordList(Base):
     __tablename__ = "word_lists"
     __table_args__ = (UniqueConstraint("user_id", "name", name="uq_word_lists_user_name"),)

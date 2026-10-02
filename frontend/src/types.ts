@@ -13,10 +13,12 @@ export type WordList = {
   unavailable_count: number
   entries?: WordListEntry[]
 }
+export type WordListMembership = { id: number; name: string; contains: boolean; entry_id: number | null }
 export type Sense = {
   part_of_speech: string
   definition: string
   examples: string[]
+  generated_examples?: string[]
   synonyms: string[]
   antonyms: string[]
   derivatives: string[]
@@ -43,5 +45,5 @@ export type Overview = {
   due: Record<Direction, number>
   new: Record<Direction, number>
   settings: { learn_batch_size: number; review_batch_size: number; pool_multiplier: number; exclude_multiword_expressions: boolean }
-  active_session: SessionSummary | null
+  active_sessions: SessionSummary[]
 }

@@ -151,9 +151,9 @@ def study_overview(db: Session, user: User) -> dict[str, Any]:
                 due[card.direction] += 1
     new_w2m = len(active_w2m - studied["w2m"] - excluded)
     new_m2w = len({word for word in active_m2w if word in forward_review} - studied["m2w"] - excluded)
-    active_session = db.scalar(select(StudySession).where(
+    active_sessions = db.scalars(select(StudySession).where(
         StudySession.user_id == user.id, StudySession.status == "active"
-    ).order_by(StudySession.created_at.desc()))
+    ).order_by(StudySession.created_at.desc())).all()
     settings = _get_or_create_settings(db, user.id)
     db.commit()
     return {
@@ -165,18 +165,21 @@ def study_overview(db: Session, user: User) -> dict[str, Any]:
             "pool_multiplier": settings.pool_multiplier,
             "exclude_multiword_expressions": settings.exclude_multiword_expressions,
         },
-        "active_session": session_summary(active_session) if active_session else None,
+        "active_sessions": [session_summary(session) for session in active_sessions],
     }
 
 
 def create_study_session(db: Session, user: User, kind: str, direction: str, override_due: bool) -> StudySession:
+    if kind not in {"learning", "review"} or direction not in {"w2m", "m2w"}:
+        raise HTTPException(422, "Invalid session kind or direction")
     existing = db.scalar(select(StudySession).where(
-        StudySession.user_id == user.id, StudySession.status == "active"
+        StudySession.user_id == user.id,
+        StudySession.status == "active",
+        StudySession.kind == kind,
+        StudySession.direction == direction,
     ).order_by(StudySession.created_at.desc()))
     if existing:
         return existing
-    if kind not in {"learning", "review"} or direction not in {"w2m", "m2w"}:
-        raise HTTPException(422, "Invalid session kind or direction")
     overview = study_overview(db, user)
     if kind == "learning" and sum(overview["due"].values()) and not override_due:
         raise HTTPException(409, {"code": "reviews_due", "message": "Review is due before learning."})
@@ -246,7 +249,7 @@ def session_summary(session: StudySession) -> dict[str, Any]:
         "id": session.id,
         "kind": session.kind,
         "direction": session.direction,
-        "target_count": session.target_count,
+        "target_count": min(session.target_count, session.pool_size),
         "pool_size": session.pool_size,
         "completed_count": session.completed_count,
         "status": session.status,

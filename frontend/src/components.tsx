@@ -35,7 +35,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
   return <div className="notice notice--error" role="alert">{error instanceof Error ? error.message : 'Something went wrong.'}</div>
 }
 
-export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function Modal({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const dialog = useRef<HTMLElement>(null)
   const close = useRef(onClose)
   close.current = onClose
@@ -55,7 +55,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
     return () => { document.removeEventListener('keydown', onKeyDown); previous?.focus() }
   }, [])
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
-    <section ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <section ref={dialog} className={`modal ${className}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <header><h2 id="modal-title">{title}</h2><IconButton label="Close" onClick={onClose}><X size={20} /></IconButton></header>
       {children}
     </section>

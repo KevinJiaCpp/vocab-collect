@@ -19,9 +19,12 @@ from .auth import COOKIE_NAME, clear_login_session, create_login_session, get_cu
 from .config import REPO_ROOT, settings
 from .db import get_db
 from .dictionary_service import dictionary_service, normalize_word, resolve_audio
+from .llm_service import example_sense_key, generate_examples
 from .models import (
     Card,
     DictionaryTerm,
+    ExampleSentenceCache,
+    LLMSettings,
     Note,
     ReviewLog,
     StudySettings,
@@ -35,6 +38,10 @@ from .schemas import (
     AnswerInput,
     AuthInput,
     EntryInput,
+    ExampleSentencesInput,
+    ExampleSentencesOutput,
+    LLMSettingsInput,
+    LLMSettingsOutput,
     NoteInput,
     PresentationInput,
     SettingsInput,
@@ -154,6 +161,31 @@ def update_settings(payload: SettingsInput, db: Session = Depends(get_db), user:
     value.exclude_multiword_expressions = payload.exclude_multiword_expressions
     db.commit()
     return payload.model_dump()
+
+
+def _llm_settings_payload(value: LLMSettings | None) -> LLMSettingsOutput:
+    if value is None:
+        return LLMSettingsOutput(base_url="https://api.openai.com/v1", model="", has_api_key=False)
+    return LLMSettingsOutput(base_url=value.base_url, model=value.model, has_api_key=bool(value.api_key))
+
+
+@app.get("/api/settings/llm", response_model=LLMSettingsOutput)
+def get_llm_settings(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _llm_settings_payload(db.get(LLMSettings, user.id))
+
+
+@app.put("/api/settings/llm", response_model=LLMSettingsOutput)
+def update_llm_settings(payload: LLMSettingsInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    value = db.get(LLMSettings, user.id)
+    if value is None:
+        value = LLMSettings(user_id=user.id)
+        db.add(value)
+    value.base_url = str(payload.base_url).rstrip("/")
+    value.model = payload.model
+    if payload.api_key is not None:
+        value.api_key = payload.api_key.get_secret_value().strip() or None
+    db.commit()
+    return _llm_settings_payload(value)
 
 
 def _owned_list(db: Session, user_id: int, list_id: int) -> WordList:
@@ -356,15 +388,22 @@ def export_list(list_id: int, format: str = Query("json", pattern="^(json|txt)$"
 
 @app.get("/api/words/learned")
 def learned_words(q: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    statement = select(WordProgress).where(WordProgress.user_id == user.id)
+    statement = select(Card, WordProgress).outerjoin(
+        WordProgress,
+        (WordProgress.user_id == Card.user_id) & (WordProgress.normalized_word == Card.normalized_word),
+    ).where(Card.user_id == user.id)
     if q.strip():
-        statement = statement.where(WordProgress.normalized_word.contains(normalize_word(q)))
-    values = db.scalars(statement.order_by(WordProgress.updated_at.desc())).all()
-    output = []
-    for value in values:
-        cards = db.scalars(select(Card).where(Card.user_id == user.id, Card.normalized_word == value.normalized_word)).all()
-        output.append({"word": value.display_word, "normalized_word": value.normalized_word, "status": value.status, "cards": [{"direction": card.direction, "state": card.state, "due": card.due} for card in cards]})
-    return output
+        statement = statement.where(Card.normalized_word.contains(normalize_word(q)))
+    output: dict[str, dict[str, Any]] = {}
+    for card, progress in db.execute(statement.order_by(WordProgress.updated_at.desc(), Card.created_at.desc())):
+        item = output.setdefault(card.normalized_word, {
+            "word": progress.display_word if progress else card.normalized_word,
+            "normalized_word": card.normalized_word,
+            "status": progress.status if progress else "active",
+            "cards": [],
+        })
+        item["cards"].append({"direction": card.direction, "state": card.state, "due": card.due})
+    return list(output.values())
 
 
 @app.put("/api/words/{word}/status")
@@ -393,6 +432,15 @@ def notes(q: str = "", db: Session = Depends(get_db), user: User = Depends(get_c
 def get_note(word: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     value = db.scalar(select(Note).where(Note.user_id == user.id, Note.normalized_word == normalize_word(word)))
     return {"word": value.display_word if value else word, "body": value.body if value else "", "updated_at": value.updated_at if value else None}
+
+
+@app.get("/api/words/{word}/lists")
+def word_lists(word: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    normalized = normalize_word(word)
+    entries = db.scalars(select(WordListEntry).join(WordList, WordList.id == WordListEntry.word_list_id).where(WordList.user_id == user.id, WordListEntry.normalized_word == normalized)).all()
+    entry_ids = {entry.word_list_id: entry.id for entry in entries}
+    values = db.scalars(select(WordList).where(WordList.user_id == user.id).order_by(WordList.created_at)).all()
+    return [{"id": value.id, "name": value.name, "contains": value.id in entry_ids, "entry_id": entry_ids.get(value.id)} for value in values]
 
 
 @app.put("/api/words/{word}/note")
@@ -443,7 +491,47 @@ def dictionary_entry(word: str, db: Session = Depends(get_db), user: User = Depe
         raise HTTPException(404, "No dictionary entry was found")
     note = db.scalar(select(Note).where(Note.user_id == user.id, Note.normalized_word == normalize_word(word)))
     value["note"] = note.body if note else ""
+    cached = {row.sense_key: json.loads(row.payload_json) for row in db.scalars(select(ExampleSentenceCache).where(
+        ExampleSentenceCache.user_id == user.id, ExampleSentenceCache.word == value["word"],
+    ))}
+    value["senses"] = [{**sense, "generated_examples": cached.get(example_sense_key(sense), [])} for sense in value["senses"]]
     return value
+
+
+@app.post("/api/dictionary/{word}/examples", response_model=ExampleSentencesOutput)
+async def dictionary_examples(word: str, payload: ExampleSentencesInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    config = db.get(LLMSettings, user.id)
+    if config is None or not config.model:
+        raise HTTPException(409, "Configure a language model in Settings → LLM to generate examples.")
+    entry = dictionary_service.lookup(word)
+    if entry is None:
+        raise HTTPException(404, "No dictionary entry was found")
+    if payload.sense_index >= len(entry["senses"]):
+        raise HTTPException(404, "This word sense is unavailable. Reload the word and try again.")
+    examples = await generate_examples(config, entry["word"], entry["senses"][payload.sense_index])
+    sense_key = example_sense_key(entry["senses"][payload.sense_index])
+    # Replace atomically; failed generation leaves the previous examples intact.
+    db.execute(delete(ExampleSentenceCache).where(
+        ExampleSentenceCache.user_id == user.id, ExampleSentenceCache.word == entry["word"], ExampleSentenceCache.sense_key == sense_key,
+    ))
+    db.add(ExampleSentenceCache(user_id=user.id, word=entry["word"], sense_key=sense_key, payload_json=json.dumps(examples, ensure_ascii=False)))
+    db.commit()
+    return ExampleSentencesOutput(examples=examples)
+
+
+@app.delete("/api/dictionary/{word}/examples/{sense_index}", status_code=204)
+def clear_dictionary_examples(word: str, sense_index: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    entry = dictionary_service.lookup(word)
+    if entry is None:
+        raise HTTPException(404, "No dictionary entry was found")
+    if not 0 <= sense_index < len(entry["senses"]):
+        raise HTTPException(404, "This word sense is unavailable. Reload the word and try again.")
+    db.execute(delete(ExampleSentenceCache).where(
+        ExampleSentenceCache.user_id == user.id, ExampleSentenceCache.word == entry["word"],
+        ExampleSentenceCache.sense_key == example_sense_key(entry["senses"][sense_index]),
+    ))
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.get("/api/study/overview")

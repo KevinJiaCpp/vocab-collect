@@ -1,6 +1,6 @@
-import { createContext, useContext, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BarChart3, BookOpen, Home, Library, LogOut, Menu, Scale, Search, Sparkles, X } from 'lucide-react'
+import { BarChart3, BookOpen, Home, Library, Menu, Search, Settings2, Sparkles, X } from 'lucide-react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, api, json } from './api'
 import { Button, ErrorNotice, Field, Loading } from './components'
@@ -11,14 +11,7 @@ import CollectionPage from './pages/CollectionPage'
 import DictionaryPage from './pages/DictionaryPage'
 import StudyPage from './pages/StudyPage'
 import LicensesPage from './pages/LicensesPage'
-
-type AuthContextValue = { user: User; logout: () => Promise<void> }
-const AuthContext = createContext<AuthContextValue | null>(null)
-export const useAuth = () => {
-  const value = useContext(AuthContext)
-  if (!value) throw new Error('Auth context is unavailable')
-  return value
-}
+import SettingsDialog, { type SettingsTab } from './SettingsDialog'
 
 function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const [username, setUsername] = useState('')
@@ -58,6 +51,7 @@ const navItems = [
 
 function Shell({ user, children }: { user: User; children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const location = useLocation()
@@ -67,23 +61,22 @@ function Shell({ user, children }: { user: User; children: React.ReactNode }) {
     queryClient.clear()
     navigate('/login')
   }
-  return <AuthContext.Provider value={{ user, logout }}>
-    <div className="app-shell">
+  const openSettings = (tab: SettingsTab = 'account') => { setMenuOpen(false); setSettingsTab(tab) }
+  return <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="brand-mark"><BookOpen size={24} /></div><strong>Vocab Collect</strong></div>
         <nav aria-label="Primary">{navItems.map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} className={({ isActive }) => isActive ? 'active' : ''}><item.icon size={21} /><span>{item.label}</span></NavLink>)}</nav>
         <div className="sidebar-footer">
-          <NavLink to="/licenses"><Scale size={20} /><span>Licenses</span></NavLink>
+          <button className="sidebar-settings" onClick={() => openSettings()}><Settings2 size={20} /><span>Settings</span></button>
           <div className="user-chip"><div className="avatar">{user.username.slice(0, 1).toUpperCase()}</div><div><strong>{user.username}</strong><span>Local account</span></div></div>
-          <button className="logout-button" onClick={logout}><LogOut size={18} /> Sign out</button>
         </div>
       </aside>
       <header className="mobile-header"><div className="sidebar-brand"><div className="brand-mark"><BookOpen size={21} /></div><strong>Vocab Collect</strong></div><button className="icon-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Open account menu">{menuOpen ? <X /> : <Menu />}</button></header>
-      {menuOpen && <div className="mobile-menu"><strong>{user.username}</strong><NavLink to="/licenses" onClick={() => setMenuOpen(false)}><Scale size={18} /> Licenses</NavLink><button onClick={logout}><LogOut size={18} /> Sign out</button></div>}
+      {menuOpen && <div className="mobile-menu"><strong>{user.username}</strong><button onClick={() => openSettings()}><Settings2 size={18} /> Settings</button></div>}
       <main className="main-content" key={location.pathname}>{children}</main>
       <nav className="bottom-nav" aria-label="Primary">{navItems.map(item => <NavLink key={item.to} to={item.to} end={item.to === '/'} className={({ isActive }) => isActive ? 'active' : ''}><item.icon size={21} /><span>{item.label}</span></NavLink>)}</nav>
+      {settingsTab && <SettingsDialog initialTab={settingsTab} user={user} logout={logout} onClose={() => setSettingsTab(null)} />}
     </div>
-  </AuthContext.Provider>
 }
 
 function ProtectedApp({ user }: { user: User }) {

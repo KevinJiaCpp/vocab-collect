@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AnyHttpUrl, BaseModel, Field, SecretStr, field_validator
 
 
 ListDirection = Literal["w2m", "bidirectional"]
@@ -21,6 +21,39 @@ class SettingsInput(BaseModel):
     review_batch_size: int = Field(ge=1, le=100)
     pool_multiplier: float = Field(default=1.5, ge=1, le=3)
     exclude_multiword_expressions: bool = False
+
+
+class LLMSettingsInput(BaseModel):
+    base_url: AnyHttpUrl = Field(max_length=2048)
+    model: str = Field(min_length=1, max_length=200)
+    # Omitted/null preserves the stored key; an empty string removes it.
+    api_key: SecretStr | None = Field(default=None, max_length=4096)
+
+    @field_validator("base_url")
+    @classmethod
+    def clean_base_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError("Use an API base URL without credentials, query parameters, or a fragment")
+        return value
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def clean_model(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
+class LLMSettingsOutput(BaseModel):
+    base_url: str
+    model: str
+    has_api_key: bool
+
+
+class ExampleSentencesInput(BaseModel):
+    sense_index: int = Field(ge=0, le=1000)
+
+
+class ExampleSentencesOutput(BaseModel):
+    examples: list[str]
 
 
 class WordListInput(BaseModel):
