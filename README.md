@@ -11,6 +11,8 @@ Vocab Collect is a self-hosted English vocabulary trainer with spaced repetition
 
 Then open `http://127.0.0.1:8000`.
 
+The launcher reserves the port before starting the application and returns an error if it is already occupied. On Ctrl+C, unfinished requests have up to five seconds to finish before they are cancelled.
+
 The setup script creates `.venv`, installs the backend and frontend dependencies, applies database migrations, downloads the optional linguistic datasets, and builds the React application. The app remains usable when an optional data download is unavailable; affected dictionary features display an actionable unavailable state.
 
 ## Development
@@ -18,7 +20,7 @@ The setup script creates `.venv`, installs the backend and frontend dependencies
 Run the backend:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --app-dir backend
+.\scripts\run.ps1 -Reload
 ```
 
 Run the frontend in another terminal:
