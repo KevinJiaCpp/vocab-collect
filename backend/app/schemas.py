@@ -85,8 +85,20 @@ class WordStatusInput(BaseModel):
 
 
 class NoteInput(BaseModel):
-    body: str = Field(max_length=20000)
-    display_word: str | None = Field(default=None, max_length=240)
+    body: str = Field(min_length=1, max_length=20000)
+    entry_ids: list[int]
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def clean_body(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("entry_ids")
+    @classmethod
+    def validate_entries(cls, value: list[int]) -> list[int]:
+        if any(entry_id <= 0 for entry_id in value) or len(set(value)) != len(value):
+            raise ValueError("Choose distinct word entries")
+        return value
 
 
 class StudyStartInput(BaseModel):

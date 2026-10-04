@@ -9,10 +9,11 @@ from typing import Any
 from fastapi import HTTPException
 from fsrs import Card as FSRSCard
 from fsrs import Rating, Scheduler, State
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .dictionary_service import dictionary_service
+from .note_service import list_notes
 from .models import (
     Card,
     ReviewLog,
@@ -274,7 +275,7 @@ def _entry_payload(db: Session, card: Card, include_answer: bool) -> dict[str, A
         answer = entry or {"word": display, "senses": senses, "pronunciations": [], "morphology": None}
     payload: dict[str, Any] = {"card_id": card.id, "direction": card.direction, "prompt": prompt}
     if include_answer:
-        payload["answer"] = answer
+        payload["answer"] = {**answer, "notes": list_notes(db, card.user_id, word=card.normalized_word, active_only=True)}
     return payload
 
 

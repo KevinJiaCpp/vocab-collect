@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, json } from '../api'
 import { Button, ErrorNotice, Loading, Panel, Tag } from '../components'
 import type { DictionaryEntry, Direction, Sense, SessionSummary } from '../types'
+import { NoteExplanations } from '../notes'
 
 type StudyResponse = {
   session: SessionSummary
@@ -74,5 +75,5 @@ function PromptSenses({ senses }: { senses: Sense[] }) {
 }
 
 function Answer({ entry }: { entry: DictionaryEntry }) {
-  return <div className="card-answer"><div className="answer-heading"><div><h2>{entry.word}</h2><span>{entry.pronunciations.join(' · ')}</span></div>{entry.pronunciations.length > 0 && <Volume2 size={21} />}</div>{entry.morphology?.seg && <Tag tone="blue">{entry.morphology.seg}</Tag>}<ol>{entry.senses.map((sense, index) => <li key={index}><span>{sense.part_of_speech}</span><p>{sense.definition}</p>{sense.synonyms.length > 0 && <small>Synonyms: {sense.synonyms.join(', ')}</small>}</li>)}</ol></div>
+  return <div className="card-answer"><div className="answer-heading"><div><h2>{entry.word}</h2><span>{entry.pronunciations.join(' · ')}</span></div>{entry.pronunciations.length > 0 && <Volume2 size={21} />}</div><NoteExplanations notes={entry.notes ?? []} normalizedWord={entry.normalized_word} compact />{entry.morphology?.seg && <Tag tone="blue">{entry.morphology.seg}</Tag>}<ol>{entry.senses.map((sense, index) => <li key={index}><span>{sense.part_of_speech}</span><p>{sense.definition}</p>{sense.synonyms.length > 0 && <small>Synonyms: {sense.synonyms.join(', ')}</small>}</li>)}</ol></div>
 }

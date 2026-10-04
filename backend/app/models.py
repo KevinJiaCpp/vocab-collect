@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -79,6 +79,7 @@ class WordList(Base):
     entries: Mapped[list[WordListEntry]] = relationship(
         back_populates="word_list", cascade="all, delete-orphan", order_by="WordListEntry.position"
     )
+    notes: Mapped[list[ListNote]] = relationship(back_populates="word_list", cascade="all, delete-orphan")
 
 
 class WordListEntry(Base):
@@ -96,6 +97,7 @@ class WordListEntry(Base):
     has_definition: Mapped[bool] = mapped_column(Boolean, default=True)
 
     word_list: Mapped[WordList] = relationship(back_populates="entries")
+    notes: Mapped[list[ListNote]] = relationship(secondary="note_entries", back_populates="entries", passive_deletes=True)
 
 
 class WordProgress(Base):
@@ -146,16 +148,27 @@ class ReviewLog(Base):
     fsrs_log_json: Mapped[str] = mapped_column(Text)
 
 
-class Note(Base):
-    __tablename__ = "notes"
-    __table_args__ = (UniqueConstraint("user_id", "normalized_word", name="uq_notes_user_word"),)
+note_entries = Table(
+    "note_entries",
+    Base.metadata,
+    Column("note_id", ForeignKey("list_notes.id", ondelete="CASCADE"), primary_key=True),
+    Column("entry_id", ForeignKey("word_list_entries.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_note_entries_entry", "entry_id"),
+)
+
+
+class ListNote(Base):
+    __tablename__ = "list_notes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    normalized_word: Mapped[str] = mapped_column(String(240))
-    display_word: Mapped[str] = mapped_column(String(240))
+    word_list_id: Mapped[int] = mapped_column(ForeignKey("word_lists.id", ondelete="CASCADE"), index=True)
     body: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    word_list: Mapped[WordList] = relationship(back_populates="notes")
+    entries: Mapped[list[WordListEntry]] = relationship(
+        secondary=note_entries, back_populates="notes", order_by="WordListEntry.position", passive_deletes=True
+    )
 
 
 class StudySession(Base):

@@ -13,7 +13,7 @@ def test_llm_migration_fresh_and_existing_database(tmp_path, monkeypatch):
     config.set_main_option("script_location", str(backend / "alembic"))
     database_url = f"sqlite:///{(tmp_path / 'migration.db').as_posix()}"
     monkeypatch.setattr(settings, "database_url", database_url)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0004_llm_settings")
     engine = create_engine(database_url)
     assert inspect(engine).has_table("llm_settings")
     with engine.begin() as connection:
@@ -21,7 +21,7 @@ def test_llm_migration_fresh_and_existing_database(tmp_path, monkeypatch):
         # Reproduce an existing database from before this feature.
         connection.execute(text("DROP TABLE llm_settings"))
     command.stamp(config, "0003_case_sensitive_dictionary_terms")
-    command.upgrade(config, "head")
+    command.upgrade(config, "0004_llm_settings")
     schema = inspect(engine)
     assert {column["name"] for column in schema.get_columns("llm_settings")} == {"user_id", "base_url", "model", "api_key"}
     foreign_key = schema.get_foreign_keys("llm_settings")[0]
@@ -42,7 +42,7 @@ def test_example_cache_migration_fresh_existing_and_rollback(tmp_path, monkeypat
     config.set_main_option("script_location", str(backend / "alembic"))
     database_url = f"sqlite:///{(tmp_path / 'examples.db').as_posix()}"
     monkeypatch.setattr(settings, "database_url", database_url)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0005_example_sentence_cache")
     engine = create_engine(database_url)
     assert inspect(engine).has_table("example_sentence_cache")
     with engine.begin() as connection:
@@ -50,7 +50,7 @@ def test_example_cache_migration_fresh_existing_and_rollback(tmp_path, monkeypat
         connection.execute(text("INSERT INTO llm_settings (user_id, base_url, model) VALUES (1, 'http://localhost:11434/v1', 'local')"))
         connection.execute(text("DROP TABLE example_sentence_cache"))
     command.stamp(config, "0004_llm_settings")
-    command.upgrade(config, "head")
+    command.upgrade(config, "0005_example_sentence_cache")
     schema = inspect(engine)
     assert schema.get_pk_constraint("example_sentence_cache")["constrained_columns"] == ["user_id", "word", "sense_key"]
     assert schema.get_foreign_keys("example_sentence_cache")[0]["options"]["ondelete"] == "CASCADE"

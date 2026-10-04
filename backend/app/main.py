@@ -4,12 +4,11 @@ import json
 import random
 import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -25,14 +24,17 @@ from .models import (
     DictionaryTerm,
     ExampleSentenceCache,
     LLMSettings,
-    Note,
+    ListNote,
     ReviewLog,
     StudySettings,
     User,
     WordList,
     WordListEntry,
     WordProgress,
+    note_entries,
+    utcnow,
 )
+from .note_service import list_notes, note_payload, note_word_entries, owned_note
 from .optimizer_service import optimize_user
 from .schemas import (
     AnswerInput,
@@ -204,11 +206,15 @@ def _list_payload(db: Session, value: WordList, include_entries: bool = False) -
         "is_active": value.is_active,
         "word_count": len(entries),
         "unavailable_count": sum(not entry.has_definition for entry in entries),
+        "note_count": db.scalar(select(func.count()).select_from(ListNote).where(ListNote.word_list_id == value.id)),
         "created_at": value.created_at,
         "updated_at": value.updated_at,
     }
     if include_entries:
-        payload["entries"] = [{"id": entry.id, "word": entry.word, "normalized_word": entry.normalized_word, "position": entry.position, "has_definition": entry.has_definition} for entry in entries]
+        note_counts = dict(db.execute(select(note_entries.c.entry_id, func.count()).join(
+            ListNote, ListNote.id == note_entries.c.note_id,
+        ).where(ListNote.word_list_id == value.id).group_by(note_entries.c.entry_id)).all())
+        payload["entries"] = [{"id": entry.id, "word": entry.word, "normalized_word": entry.normalized_word, "position": entry.position, "has_definition": entry.has_definition, "note_count": note_counts.get(entry.id, 0)} for entry in entries]
     return payload
 
 
@@ -279,7 +285,7 @@ def add_entry(list_id: int, payload: EntryInput, db: Session = Depends(get_db), 
     value = _owned_list(db, user.id, list_id)
     entry = _add_entry(db, user.id, value, payload.word)
     db.commit()
-    return {"id": entry.id, "word": entry.word, "normalized_word": entry.normalized_word, "position": entry.position, "has_definition": entry.has_definition}
+    return {"id": entry.id, "word": entry.word, "normalized_word": entry.normalized_word, "position": entry.position, "has_definition": entry.has_definition, "note_count": 0}
 
 
 @app.delete("/api/lists/{list_id}/entries/{entry_id}", status_code=204)
@@ -308,81 +314,76 @@ def shuffle_list(list_id: int, db: Session = Depends(get_db), user: User = Depen
     return _list_payload(db, value, True)
 
 
-def _parse_text_import(text: str, fallback_name: str, fallback_direction: str) -> tuple[str, str, list[str]]:
-    name = fallback_name
-    direction = fallback_direction
-    words: list[str] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("# name:"):
-            name = stripped.split(":", 1)[1].strip() or name
-        elif stripped.startswith("# direction:"):
-            direction = stripped.split(":", 1)[1].strip()
-        elif not stripped.startswith("#"):
-            words.append(stripped)
-    return name, direction, words
+def _parse_list_import(content: str) -> tuple[str, str, list[str], list[dict[str, Any]]]:
+    try:
+        value = json.loads(content)
+        if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] not in {1, 2}:
+            raise ValueError("Use a version 1 or version 2 Vocab Collect JSON file")
+        name = value.get("name")
+        direction = value.get("direction", "w2m")
+        words = value.get("words")
+        notes = value.get("notes", [])
+        if not isinstance(name, str) or not 1 <= len(" ".join(name.split())) <= 120:
+            raise ValueError("Imported list name must be 1–120 characters")
+        if direction not in {"w2m", "bidirectional"}:
+            raise ValueError("Imported list direction is not supported")
+        if not isinstance(words, list) or not all(isinstance(word, str) and 1 <= len(word) <= 240 and normalize_word(word) for word in words):
+            raise ValueError("Imported words must be 1–240 characters")
+        normalized = {normalize_word(word) for word in words}
+        if len(normalized) != len(words):
+            raise ValueError("Imported words must be unique, ignoring case and spacing")
+        if not isinstance(notes, list) or (value["version"] == 1 and notes):
+            raise ValueError("Notes require a version 2 JSON file")
+        for note in notes:
+            if not isinstance(note, dict) or not isinstance(note.get("body"), str) or not 1 <= len(note["body"].strip()) <= 20000:
+                raise ValueError("Imported note text must be 1–20000 characters")
+            links = note.get("words")
+            if not isinstance(links, list) or not all(isinstance(word, str) and normalize_word(word) in normalized for word in links):
+                raise ValueError("Every note word must belong to the imported word list")
+            if len({normalize_word(word) for word in links}) != len(links):
+                raise ValueError("A note cannot link the same word twice")
+        return " ".join(name.split()), direction, words, notes
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc) or "Invalid Vocab Collect JSON file") from exc
 
 
 @app.post("/api/lists/import", status_code=201)
 async def import_list(
     file: UploadFile = File(...),
-    direction: str = Form("w2m"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if direction not in {"w2m", "bidirectional"}:
-        raise HTTPException(422, "Invalid list direction")
+    if not (file.filename or "").casefold().endswith(".json"):
+        raise HTTPException(422, "Import a Vocab Collect JSON file")
     try:
         content = (await file.read()).decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise HTTPException(422, "Import file must be UTF-8 text") from exc
-    fallback_name = Path(file.filename or "Imported list").stem[:120]
-    if (file.filename or "").casefold().endswith(".json"):
-        try:
-            parsed = json.loads(content)
-            if not isinstance(parsed, dict) or parsed.get("version") != 1 or not isinstance(parsed.get("name"), str) or not isinstance(parsed.get("words"), list) or not all(isinstance(word, str) and 0 < len(word) <= 240 for word in parsed["words"]):
-                raise ValueError
-            name, imported_direction, words = parsed.get("name", fallback_name), parsed.get("direction", direction), parsed["words"]
-        except (ValueError, TypeError, json.JSONDecodeError) as exc:
-            raise HTTPException(422, "Invalid Vocab Collect JSON file") from exc
-    else:
-        name, imported_direction, words = _parse_text_import(content, fallback_name, direction)
-    if imported_direction not in {"w2m", "bidirectional"}:
-        raise HTTPException(422, "Imported list direction is not supported")
-    name = " ".join(str(name).strip().split())
-    if not 1 <= len(name) <= 120:
-        raise HTTPException(422, "Imported list name must be 1–120 characters")
+        raise HTTPException(422, "Import file must be UTF-8 JSON") from exc
+    name, imported_direction, words, imported_notes = _parse_list_import(content)
     value = WordList(user_id=user.id, name=name, direction=imported_direction, is_active=True)
     db.add(value)
     try:
         db.flush()
-        seen: set[str] = set()
-        for raw in words:
-            normalized = normalize_word(str(raw))
-            if not normalized or len(str(raw)) > 240:
-                raise HTTPException(422, "Imported words must be 1–240 characters")
-            if normalized in seen:
-                raise HTTPException(409, f"Duplicate word in import: {raw}")
-            _add_entry(db, user.id, value, str(raw))
-            seen.add(normalized)
+        entries = {normalize_word(raw): _add_entry(db, user.id, value, raw) for raw in words}
+        for imported_note in imported_notes:
+            db.add(ListNote(word_list_id=value.id, body=imported_note["body"].strip(), entries=[entries[normalize_word(word)] for word in imported_note["words"]]))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, "A list with that name already exists") from exc
+    except HTTPException:
+        db.rollback()
+        raise
     return _list_payload(db, value, True)
 
 
 @app.get("/api/lists/{list_id}/export")
-def export_list(list_id: int, format: str = Query("json", pattern="^(json|txt)$"), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def export_list(list_id: int, format: str = Query("json", pattern="^json$"), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     value = _owned_list(db, user.id, list_id)
     entries = db.scalars(select(WordListEntry).where(WordListEntry.word_list_id == value.id).order_by(WordListEntry.position)).all()
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.name).strip("-") or "word-list"
-    if format == "txt":
-        body = "\n".join(["# vocab-collect: 1", f"# name: {value.name}", f"# direction: {value.direction}", *[entry.word for entry in entries]]) + "\n"
-        return PlainTextResponse(body, headers={"Content-Disposition": f'attachment; filename="{safe_name}.txt"'})
-    body = json.dumps({"version": 1, "name": value.name, "direction": value.direction, "words": [entry.word for entry in entries]}, ensure_ascii=False, indent=2)
+    exported_notes = [{"body": note["body"], "words": [entry["word"] for entry in note["words"]]} for note in sorted(list_notes(db, user.id, list_id=list_id), key=lambda note: note["id"])]
+    body = json.dumps({"version": 2, "name": value.name, "direction": value.direction, "words": [entry.word for entry in entries], "notes": exported_notes}, ensure_ascii=False, indent=2)
     return Response(body, media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{safe_name}.json"'})
 
 
@@ -420,18 +421,17 @@ def set_word_status(word: str, payload: WordStatusInput, db: Session = Depends(g
 
 
 @app.get("/api/notes")
-def notes(q: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    statement = select(Note).where(Note.user_id == user.id)
-    if q.strip():
-        key = normalize_word(q)
-        statement = statement.where((Note.normalized_word.contains(key)) | (Note.body.contains(q.strip())))
-    return [{"word": value.display_word, "normalized_word": value.normalized_word, "body": value.body, "updated_at": value.updated_at} for value in db.scalars(statement.order_by(Note.updated_at.desc())).all()]
+def notes(q: str = "", list_id: int | None = None, word: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return list_notes(db, user.id, q=q, list_id=list_id, word=word)
 
 
-@app.get("/api/words/{word}/note")
-def get_note(word: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    value = db.scalar(select(Note).where(Note.user_id == user.id, Note.normalized_word == normalize_word(word)))
-    return {"word": value.display_word if value else word, "body": value.body if value else "", "updated_at": value.updated_at if value else None}
+@app.post("/api/lists/{list_id}/notes", status_code=201)
+def create_note(list_id: int, payload: NoteInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    value = _owned_list(db, user.id, list_id)
+    note = ListNote(word_list=value, body=payload.body, entries=note_word_entries(db, list_id, payload.entry_ids))
+    db.add(note)
+    db.commit()
+    return note_payload(note)
 
 
 @app.get("/api/words/{word}/lists")
@@ -443,24 +443,19 @@ def word_lists(word: str, db: Session = Depends(get_db), user: User = Depends(ge
     return [{"id": value.id, "name": value.name, "contains": value.id in entry_ids, "entry_id": entry_ids.get(value.id)} for value in values]
 
 
-@app.put("/api/words/{word}/note")
-def put_note(word: str, payload: NoteInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    normalized = normalize_word(word)
-    value = db.scalar(select(Note).where(Note.user_id == user.id, Note.normalized_word == normalized))
-    display = payload.display_word or word
-    if value is None:
-        value = Note(user_id=user.id, normalized_word=normalized, display_word=display, body=payload.body)
-        db.add(value)
-    else:
-        value.body = payload.body
-        value.display_word = display
+@app.put("/api/notes/{note_id}")
+def put_note(note_id: int, payload: NoteInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    value = owned_note(db, user.id, note_id)
+    value.entries = note_word_entries(db, value.word_list_id, payload.entry_ids)
+    value.body = payload.body
+    value.updated_at = utcnow()
     db.commit()
-    return {"word": value.display_word, "normalized_word": normalized, "body": value.body, "updated_at": value.updated_at}
+    return note_payload(value)
 
 
-@app.delete("/api/words/{word}/note", status_code=204)
-def delete_note(word: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    db.execute(delete(Note).where(Note.user_id == user.id, Note.normalized_word == normalize_word(word)))
+@app.delete("/api/notes/{note_id}", status_code=204)
+def delete_note(note_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    db.delete(owned_note(db, user.id, note_id))
     db.commit()
     return Response(status_code=204)
 
@@ -489,8 +484,7 @@ def dictionary_entry(word: str, db: Session = Depends(get_db), user: User = Depe
     value = dictionary_service.lookup(word)
     if value is None:
         raise HTTPException(404, "No dictionary entry was found")
-    note = db.scalar(select(Note).where(Note.user_id == user.id, Note.normalized_word == normalize_word(word)))
-    value["note"] = note.body if note else ""
+    value["notes"] = list_notes(db, user.id, word=word)
     cached = {row.sense_key: json.loads(row.payload_json) for row in db.scalars(select(ExampleSentenceCache).where(
         ExampleSentenceCache.user_id == user.id, ExampleSentenceCache.word == value["word"],
     ))}

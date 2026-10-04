@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import App from './App'
+import { applyTheme } from './theme'
 
 const user = { id: 1, username: 'Reader', created_at: '2026-01-01T00:00:00Z' }
 
@@ -359,8 +360,33 @@ it('opens settings from the shell and applies the appearance choice', async () =
   fireEvent.click(screen.getByRole('radio', { name: /Dark/ }))
   expect(document.documentElement.dataset.theme).toBe('dark')
   expect(localStorage.getItem('vocab-theme')).toBe('dark')
+  fireEvent.click(screen.getByRole('radio', { name: 'Violet' }))
+  expect(document.documentElement.dataset.accent).toBe('violet')
+  expect(localStorage.getItem('vocab-accent')).toBe('violet')
+  fireEvent.click(screen.getByRole('radio', { name: /Light/ }))
+  expect(document.documentElement.dataset.theme).toBe('light')
+  expect(document.documentElement.dataset.accent).toBe('violet')
   fireEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  fireEvent.click(screen.getByRole('tab', { name: 'Appearance' }))
+  expect(screen.getByRole('radio', { name: 'Violet' })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: 'Blue' }))
+  expect(document.documentElement.dataset.accent).toBe('blue')
   localStorage.removeItem('vocab-theme')
+  localStorage.removeItem('vocab-accent')
   document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-accent')
+})
+
+it('restores the saved accent on startup and falls back for an unknown color', () => {
+  localStorage.setItem('vocab-accent', 'green')
+  applyTheme('light')
+  expect(document.documentElement.dataset.accent).toBe('green')
+  localStorage.setItem('vocab-accent', 'unknown-color')
+  applyTheme('dark')
+  expect(document.documentElement.dataset.accent).toBe('blue')
+  localStorage.removeItem('vocab-accent')
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-accent')
 })

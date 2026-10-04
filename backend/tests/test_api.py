@@ -15,7 +15,7 @@ from app.db import Base, get_db
 from app.config import settings
 from app.dictionary_service import dictionary_service, example_mentions_term, normalize_dictionary_term, normalize_word
 from app.main import app
-from app.models import AudioCache, Card, ExampleSentenceCache, LLMSettings, ReviewLog, StudySession, User, WordProgress
+from app.models import AudioCache, Card, ExampleSentenceCache, ListNote, LLMSettings, ReviewLog, StudySession, User, WordProgress, note_entries
 
 
 @pytest.fixture
@@ -117,18 +117,127 @@ def test_auth_lists_import_notes_and_isolation(client):
     assert http.post(f"/api/lists/{list_id}/entries", json={"word": "LUCID"}).status_code == 409
     assert http.post(f"/api/lists/{list_id}/entries", json={"word": "unknownwordxyz"}).json()["has_definition"] is False
     exported = http.get(f"/api/lists/{list_id}/export?format=json").json()
-    assert exported == {"version": 1, "name": "First", "direction": "bidirectional", "words": ["Lucid", "unknownwordxyz"]}
+    assert exported == {"version": 2, "name": "First", "direction": "bidirectional", "words": ["Lucid", "unknownwordxyz"], "notes": []}
     imported = http.post("/api/lists/import", files={"file": ("copy.json", json.dumps({**exported, "name": "Copy"}), "application/json")})
     assert imported.status_code == 201, imported.text
     assert [entry["word"] for entry in imported.json()["entries"]] == exported["words"]
-    assert http.put("/api/words/lucid/note", json={"body": "A memorable note"}).status_code == 200
-    assert http.get("/api/words/lucid/note").json()["body"] == "A memorable note"
+    entry_id = http.get(f"/api/lists/{list_id}").json()["entries"][0]["id"]
+    assert http.post(f"/api/lists/{list_id}/notes", json={"body": "A memorable note", "entry_ids": [entry_id]}).status_code == 201
+    assert http.get("/api/notes?word=lucid").json()[0]["body"] == "A memorable note"
     assert http.post("/api/auth/logout").status_code == 204
     assert http.get("/api/lists").status_code == 401
     register(http, "StudentB")
     assert http.get("/api/lists").json() == []
-    assert http.get("/api/words/lucid/note").json()["body"] == ""
+    assert http.get("/api/notes?word=lucid").json() == []
     assert http.get(f"/api/lists/{list_id}").status_code == 404
+
+
+def test_list_notes_shared_edit_ownership_unlink_and_cascade(client):
+    http, engine = client
+    register(http, "NoteOwner")
+    first = http.post("/api/lists", json={"name": "First"}).json()["id"]
+    second = http.post("/api/lists", json={"name": "Second"}).json()["id"]
+    entries = [http.post(f"/api/lists/{first}/entries", json={"word": word}).json()["id"] for word in ("Lucid", "Resilient")]
+    foreign_entry = http.post(f"/api/lists/{second}/entries", json={"word": "Lucid"}).json()["id"]
+    shared = http.post(f"/api/lists/{first}/notes", json={"body": " Shared explanation ", "entry_ids": entries})
+    assert shared.status_code == 201, shared.text
+    shared = shared.json()
+    note_id = shared["id"]
+    assert shared["body"] == "Shared explanation"
+    assert shared["word_list_id"] == first and shared["list_name"] == "First"
+    assert [word["word"] for word in shared["words"]] == ["Lucid", "Resilient"]
+    additional = http.post(f"/api/lists/{first}/notes", json={"body": "Second explanation", "entry_ids": [entries[0]]}).json()
+    assert len(http.get("/api/notes?word=LUCID").json()) == 2
+    detail = http.get(f"/api/lists/{first}").json()
+    assert detail["note_count"] == 2
+    assert [word["note_count"] for word in detail["entries"]] == [2, 1]
+    assert http.get("/api/notes?q=explanation").json()
+    assert http.get(f"/api/notes?list_id={second}").json() == []
+    for entry_ids in ([foreign_entry], [entries[0], foreign_entry], [entries[0], entries[0]]):
+        assert http.put(f"/api/notes/{note_id}", json={"body": "Invalid", "entry_ids": entry_ids}).status_code == 422
+    assert http.post(f"/api/lists/{first}/notes", json={"body": "   ", "entry_ids": entries}).status_code == 422
+    updated = http.put(f"/api/notes/{note_id}", json={"body": "Edited once", "entry_ids": entries}).json()
+    assert updated["body"] == "Edited once"
+    assert http.get("/api/notes?word=resilient").json()[0]["body"] == "Edited once"
+    http.post("/api/auth/logout")
+    register(http, "OtherNoteOwner")
+    other_list = http.post("/api/lists", json={"name": "Other"}).json()["id"]
+    assert http.get("/api/notes").json() == []
+    assert http.put(f"/api/notes/{note_id}", json={"body": "Stolen", "entry_ids": []}).status_code == 404
+    assert http.delete(f"/api/notes/{note_id}").status_code == 404
+    assert http.post(f"/api/lists/{first}/notes", json={"body": "Stolen", "entry_ids": []}).status_code == 404
+    assert http.post(f"/api/lists/{other_list}/notes", json={"body": "Cross account", "entry_ids": entries}).status_code == 422
+    http.post("/api/auth/logout")
+    http.post("/api/auth/login", json={"username": "NoteOwner", "password": "long-enough-password"})
+    assert http.delete(f"/api/lists/{first}/entries/{entries[0]}").status_code == 204
+    notes = {note["id"]: note for note in http.get("/api/notes").json()}
+    assert [word["word"] for word in notes[note_id]["words"]] == ["Resilient"]
+    assert notes[additional["id"]]["words"] == []
+    assert http.delete(f"/api/lists/{first}/entries/{entries[1]}").status_code == 204
+    assert all(note["words"] == [] for note in http.get("/api/notes").json())
+    assert http.delete(f"/api/notes/{additional['id']}").status_code == 204
+    assert http.delete(f"/api/lists/{first}").status_code == 204
+    with Session(engine) as db:
+        assert db.scalars(select(ListNote)).all() == []
+        assert db.execute(select(note_entries)).all() == []
+
+
+def test_notes_json_roundtrip_legacy_and_atomic_invalid_import(client):
+    http, _ = client
+    register(http, "NoteImporter")
+    source = {"version": 2, "name": "Source", "direction": "bidirectional", "words": ["Resilient", "Lucid"], "notes": [
+        {"body": "Two words share this", "words": ["lucid", "RESILIENT"]},
+        {"body": "Extra explanation", "words": ["Lucid"]},
+        {"body": "Unlinked explanation", "words": []},
+    ]}
+    def upload(value, filename="list.json"):
+        return http.post("/api/lists/import", files={"file": (filename, json.dumps(value), "application/json")})
+    imported = upload(source)
+    assert imported.status_code == 201, imported.text
+    list_id = imported.json()["id"]
+    assert [entry["word"] for entry in imported.json()["entries"]] == source["words"]
+    exported = http.get(f"/api/lists/{list_id}/export").json()
+    assert exported == {**source, "notes": [
+        {"body": "Two words share this", "words": ["Resilient", "Lucid"]}, *source["notes"][1:],
+    ]}
+    copied = upload({**exported, "name": "Copy"})
+    assert copied.status_code == 201 and copied.json()["note_count"] == 3
+    assert http.get(f"/api/lists/{copied.json()['id']}/export").json() == {**exported, "name": "Copy"}
+    assert upload({"version": 1, "name": "Legacy", "words": ["Lucid"]}).status_code == 201
+    failures = [
+        {**source, "version": 3}, {**source, "version": True}, {**source, "words": ["Lucid", " LUCID "]},
+        {**source, "notes": [{"body": "Valid", "words": ["missing"]}]},
+        {**source, "notes": [{"body": " ", "words": ["Lucid"]}]},
+        {**source, "notes": [{"body": "Valid", "words": ["Lucid", "lucid"]}]},
+        {**source, "notes": [{"body": "Valid", "words": "Lucid"}]},
+    ]
+    before = http.get("/api/lists").json()
+    for index, value in enumerate(failures):
+        invalid = upload({**value, "name": f"Invalid {index}"})
+        assert invalid.status_code == 422, invalid.text
+        assert http.get("/api/lists").json() == before
+    assert upload(source, "list.txt").status_code == 422
+    assert http.get(f"/api/lists/{list_id}/export?format=txt").status_code == 422
+    assert upload(source).status_code == 409
+    assert http.get("/api/lists").json() == before
+
+
+def test_dictionary_and_study_note_visibility(client, monkeypatch):
+    http, _ = client
+    register(http, "NoteReader")
+    monkeypatch.setattr(dictionary_service, "available", lambda: True)
+    for name, active in (("Active", True), ("Paused", False)):
+        list_id = http.post("/api/lists", json={"name": name, "is_active": active}).json()["id"]
+        entry_id = http.post(f"/api/lists/{list_id}/entries", json={"word": "Lucid"}).json()["id"]
+        assert http.post(f"/api/lists/{list_id}/notes", json={"body": f"{name} explanation", "entry_ids": [entry_id]}).status_code == 201
+    assert {note["list_name"] for note in http.get("/api/dictionary/lucid").json()["notes"]} == {"Active", "Paused"}
+    session = http.post("/api/study/sessions", json={"kind": "learning"}).json()
+    prompt = http.get(f"/api/study/sessions/{session['id']}/next").json()
+    assert "notes" not in json.dumps(prompt)
+    revealed = http.post(f"/api/study/sessions/{session['id']}/reveal", json={"presentation_token": prompt["presentation_token"]}).json()
+    assert [note["list_name"] for note in revealed["item"]["answer"]["notes"]] == ["Active"]
+    resumed = http.get(f"/api/study/sessions/{session['id']}/next").json()
+    assert resumed["item"]["answer"]["notes"] == revealed["item"]["answer"]["notes"]
 
 
 def test_word_list_membership_tracks_add_and_remove(client):

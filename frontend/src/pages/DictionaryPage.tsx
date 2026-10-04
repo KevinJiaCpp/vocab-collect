@@ -4,7 +4,8 @@ import { ExternalLink, Headphones, LoaderCircle, Plus, RefreshCw, Search, Sparkl
 import { useNavigate, useParams } from 'react-router-dom'
 import { ApiError, api, json } from '../api'
 import { Button, Empty, ErrorNotice, Loading, PageHeader, Panel, Tag } from '../components'
-import type { DictionaryEntry, Sense, WordListMembership } from '../types'
+import type { DictionaryEntry, ListNote, Sense, WordListMembership } from '../types'
+import { NoteExplanations, NotesEditor } from '../notes'
 import type { components } from '../api.generated'
 
 type SearchResult = { items: { word: string; match: string }[]; page: number; has_more: boolean }
@@ -13,23 +14,30 @@ type Audio = { url: string; source_url: string; title: string; creator: string; 
 export default function DictionaryPage() {
   const params = useParams()
   const navigate = useNavigate()
-  const client = useQueryClient()
   const [query, setQuery] = useState(params.word || '')
   const [debounced, setDebounced] = useState(query)
   const [page, setPage] = useState(1)
   const [results, setResults] = useState<SearchResult['items']>([])
   const [hasMore, setHasMore] = useState(false)
   const [selectedWord, setSelectedWord] = useState(params.word || '')
-  const [note, setNote] = useState('')
+  const [editingNote, setEditingNote] = useState<ListNote | undefined>()
+  const noteEditor = useRef<HTMLElement>(null)
+  useEffect(() => { setSelectedWord(params.word || ''); setQuery(params.word || ''); setEditingNote(undefined) }, [params.word])
   useEffect(() => { const id = window.setTimeout(() => setDebounced(query.trim()), 250); return () => window.clearTimeout(id) }, [query])
   useEffect(() => { setPage(1); setResults([]); setHasMore(false) }, [debounced])
   const search = useQuery({ queryKey: ['dictionary-search', debounced, page], queryFn: () => api<SearchResult>(`/dictionary/search?q=${encodeURIComponent(debounced)}&page=${page}`), enabled: debounced.length > 0 })
   useEffect(() => { if (search.data) { setResults(previous => page === 1 ? search.data!.items : [...previous, ...search.data!.items]); setHasMore(search.data.has_more) } }, [search.data, page])
   const entry = useQuery({ queryKey: ['dictionary-entry', selectedWord], queryFn: () => api<DictionaryEntry>(`/dictionary/${encodeURIComponent(selectedWord)}`), enabled: !!selectedWord })
-  useEffect(() => { setNote(entry.data?.note || '') }, [entry.data])
-  const saveNote = useMutation({ mutationFn: () => api(`/words/${encodeURIComponent(selectedWord)}/note`, json('PUT', { body: note, display_word: entry.data?.word })), onSuccess: () => { client.invalidateQueries({ queryKey: ['notes'] }); client.invalidateQueries({ queryKey: ['dictionary-entry', selectedWord] }) } })
   const audio = useMutation({ mutationFn: () => api<Audio>(`/dictionary/${encodeURIComponent(selectedWord)}/audio`) })
+  useEffect(() => { audio.reset() }, [params.word, audio.reset])
   const selectWord = (word: string) => { setSelectedWord(word); setQuery(word); navigate(`/dictionary/${encodeURIComponent(word)}`, { replace: true }); audio.reset() }
+  const openNoteEditor = (note?: ListNote) => {
+    setEditingNote(note)
+    window.requestAnimationFrame(() => {
+      noteEditor.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' })
+      noteEditor.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus({ preventScroll: true })
+    })
+  }
 
   return <div className="page dictionary-page">
     <PageHeader eyebrow="Open English WordNet" title="Dictionary" />
@@ -42,9 +50,9 @@ export default function DictionaryPage() {
         {(search.data || results.length > 0) && <div className="search-results">{results.map(item => <button key={item.word} className={selectedWord === item.word ? 'active' : ''} onClick={() => selectWord(item.word)}><span>{item.word}</span><Tag tone={item.match === 'exact' ? 'blue' : 'neutral'}>{item.match}</Tag></button>)}{!results.length && <Empty title="No close matches" detail="Check the spelling or try a shorter prefix." />}{hasMore && <button onClick={() => setPage(value => value + 1)} disabled={search.isFetching}>Load more results</button>}</div>}
       </aside>
       <section className="dictionary-entry-panel">
-        {!selectedWord ? <Panel className="dictionary-welcome"><div className="dictionary-letter">Aa</div><h2>Definitions, connections, and structure</h2><p>Choose a result to see every sense, pronunciation, morphology, synonyms, antonyms, and derivatives.</p></Panel> : entry.isLoading ? <Loading label={`Looking up ${selectedWord}`} /> : entry.error && !(entry.error instanceof ApiError && entry.error.status === 404) ? <ErrorNotice error={entry.error} /> : !entry.data ? <Empty title="Definition unavailable" detail="This word can stay in a list, but it will not be scheduled for study." /> : <EntryView key={entry.data.word} entry={entry.data} />}
+        {!selectedWord ? <Panel className="dictionary-welcome"><div className="dictionary-letter">Aa</div><h2>Definitions, connections, and structure</h2><p>Choose a result to see every sense, pronunciation, morphology, synonyms, antonyms, and derivatives.</p></Panel> : entry.isLoading ? <Loading label={`Looking up ${selectedWord}`} /> : entry.error && !(entry.error instanceof ApiError && entry.error.status === 404) ? <ErrorNotice error={entry.error} /> : !entry.data ? <Empty title="Definition unavailable" detail="This word can stay in a list, but it will not be scheduled for study." /> : <EntryView key={entry.data.word} entry={entry.data} onEditNote={openNoteEditor} onAddNote={() => openNoteEditor()} />}
         {entry.data && <>
-          <Panel className="dictionary-actions"><div className="panel-heading"><div><p className="eyebrow">Personal note</p><h2>What should you remember?</h2></div><StickyNote size={22} /></div><textarea aria-label={`Note for ${selectedWord}`} value={note} onChange={event => setNote(event.target.value)} rows={5} maxLength={20000} placeholder="Add context, a mnemonic, or your own example…" /><div className="align-right"><Button variant="secondary" onClick={() => saveNote.mutate()} disabled={saveNote.isPending}>Save note</Button></div>{saveNote.isSuccess && <div className="notice notice--success">Note saved.</div>}{saveNote.error && <ErrorNotice error={saveNote.error} />}</Panel>
+          <section className="dictionary-actions note-composer" ref={noteEditor} aria-label="Note editor"><div className="note-composer-heading"><StickyNote size={20} /><h2>{editingNote ? 'Edit explanation' : 'Add an explanation'}</h2></div><NotesEditor key={`${selectedWord}-${editingNote?.id ?? 'new'}`} word={entry.data.word} editing={editingNote} onSaved={() => setEditingNote(undefined)} onCancel={editingNote ? () => setEditingNote(undefined) : undefined} /></section>
           <Panel className="dictionary-actions"><div className="panel-heading"><div><p className="eyebrow">Wiktionary audio</p><h2>Hear a pronunciation</h2></div><Headphones size={22} /></div>{!audio.data ? <Button variant="secondary" onClick={() => audio.mutate()} disabled={audio.isPending}><Volume2 size={18} /> {audio.isPending ? 'Finding audio…' : 'Find audio'}</Button> : <div className="audio-result"><audio controls src={audio.data.url} /><div><strong>{audio.data.creator}</strong><span>{audio.data.license}</span>{audio.data.attribution && <small>{audio.data.attribution}</small>}<a href={audio.data.source_url} target="_blank" rel="noreferrer">Source & license <ExternalLink size={14} /></a></div></div>}{audio.error && <ErrorNotice error={audio.error} />}</Panel>
         </>}
       </section>
@@ -52,10 +60,11 @@ export default function DictionaryPage() {
   </div>
 }
 
-function EntryView({ entry }: { entry: DictionaryEntry }) {
+function EntryView({ entry, onEditNote, onAddNote }: { entry: DictionaryEntry; onEditNote: (note: ListNote) => void; onAddNote: () => void }) {
   const byPos = entry.senses.reduce<Record<string, DictionaryEntry['senses']>>((groups, sense) => { (groups[sense.part_of_speech] ||= []).push(sense); return groups }, {})
   return <div className="entry-content">
     <header className="entry-header"><h2>{entry.word}</h2><CollectMenu word={entry.word} /><div className="pronunciations">{entry.pronunciations.length ? entry.pronunciations.map(value => <span key={value}>{value}</span>) : <span>Pronunciation unavailable</span>}</div></header>
+    <NoteExplanations notes={entry.notes ?? []} normalizedWord={entry.normalized_word} onEdit={onEditNote} onAdd={onAddNote} />
     {entry.morphology && <Panel className="morphology"><p className="eyebrow">Word structure</p><div>{entry.morphology.prefixes?.map(item => <span key={`p-${item}`}><small>prefix</small>{item}</span>)}{entry.morphology.roots?.map(item => <span className="root" key={`r-${item}`}><small>root</small>{item}</span>)}{entry.morphology.suffixes?.map(item => <span key={`s-${item}`}><small>suffix</small>{item}</span>)}</div></Panel>}
     <div className="sense-groups">{Object.entries(byPos).map(([part, senses]) => <section key={part}><h3>{part}</h3><ol>{senses.map((sense, index) => <li key={`${part}-${index}`}><SenseExamples word={entry.word} sense={sense} senseIndex={entry.senses.indexOf(sense)} />{sense.synonyms.length > 0 && <Relation label="Synonyms" values={sense.synonyms} tone="blue" />}{sense.antonyms.length > 0 && <Relation label="Antonyms" values={sense.antonyms} tone="red" />}{sense.derivatives.length > 0 && <Relation label="Derivatives" values={sense.derivatives} tone="neutral" />}</li>)}</ol></section>)}</div>
     <p className="attribution">{entry.attribution}</p>
@@ -124,7 +133,7 @@ function CollectMenu({ word }: { word: string }) {
     mutationFn: (item: WordListMembership) => item.contains
       ? api(`/lists/${item.id}/entries/${item.entry_id}`, { method: 'DELETE' })
       : api(`/lists/${item.id}/entries`, json('POST', { word })),
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['word-lists', word] }); client.invalidateQueries({ queryKey: ['lists'] }) },
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['word-lists', word] }); for (const key of ['lists', 'list', 'notes', 'dictionary-entry', 'study-session', 'study-overview']) client.invalidateQueries({ queryKey: [key] }) },
   })
   useEffect(() => {
     if (!open) return

@@ -281,20 +281,18 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/words/{word}/note": {
+    "/api/lists/{list_id}/notes": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Note */
-        get: operations["get_note_api_words__word__note_get"];
-        /** Put Note */
-        put: operations["put_note_api_words__word__note_put"];
-        post?: never;
-        /** Delete Note */
-        delete: operations["delete_note_api_words__word__note_delete"];
+        get?: never;
+        put?: never;
+        /** Create Note */
+        post: operations["create_note_api_lists__list_id__notes_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -312,6 +310,24 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Note */
+        put: operations["put_note_api_notes__note_id__put"];
+        post?: never;
+        /** Delete Note */
+        delete: operations["delete_note_api_notes__note_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -597,11 +613,6 @@ export interface components {
         Body_import_list_api_lists_import_post: {
             /** File */
             file: string;
-            /**
-             * Direction
-             * @default w2m
-             */
-            direction: string;
         };
         /** EntryInput */
         EntryInput: {
@@ -648,8 +659,8 @@ export interface components {
         NoteInput: {
             /** Body */
             body: string;
-            /** Display Word */
-            display_word?: string | null;
+            /** Entry Ids */
+            entry_ids: number[];
         };
         /** PresentationInput */
         PresentationInput: {
@@ -1407,6 +1418,8 @@ export interface operations {
         parameters: {
             query?: {
                 q?: string;
+                list_id?: number | null;
+                word?: string | null;
             };
             header?: never;
             path?: never;
@@ -1436,45 +1449,12 @@ export interface operations {
             };
         };
     };
-    get_note_api_words__word__note_get: {
+    create_note_api_lists__list_id__notes_post: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                word: string;
-            };
-            cookie?: {
-                vocab_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_note_api_words__word__note_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                word: string;
+                list_id: number;
             };
             cookie?: {
                 vocab_session?: string | null;
@@ -1487,44 +1467,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": unknown;
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_note_api_words__word__note_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                word: string;
-            };
-            cookie?: {
-                vocab_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -1558,6 +1507,74 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_note_api_notes__note_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: number;
+            };
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_note_api_notes__note_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                note_id: number;
+            };
+            cookie?: {
+                vocab_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

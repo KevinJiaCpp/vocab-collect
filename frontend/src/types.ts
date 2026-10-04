@@ -3,7 +3,15 @@ import type { components } from './api.generated'
 export type User = { id: number; username: string; created_at: string }
 export type Direction = components['schemas']['StudyStartInput']['direction']
 export type ListDirection = components['schemas']['WordListInput']['direction']
-export type WordListEntry = { id: number; word: string; normalized_word: string; position: number; has_definition: boolean }
+export type WordListEntry = { id: number; word: string; normalized_word: string; position: number; has_definition: boolean; note_count?: number }
+export type ListNote = {
+  id: number
+  word_list_id: number
+  list_name: string
+  body: string
+  words: { id: number; word: string; normalized_word: string }[]
+  updated_at: string
+}
 export type WordList = {
   id: number
   name: string
@@ -11,6 +19,7 @@ export type WordList = {
   is_active: boolean
   word_count: number
   unavailable_count: number
+  note_count?: number
   entries?: WordListEntry[]
 }
 export type WordListMembership = { id: number; name: string; contains: boolean; entry_id: number | null }
@@ -30,7 +39,7 @@ export type DictionaryEntry = {
   pronunciations: string[]
   morphology: null | { seg?: string; prefixes?: string[]; roots?: string[]; suffixes?: string[] }
   attribution: string
-  note?: string
+  notes?: ListNote[]
 }
 export type SessionSummary = {
   id: number

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Bot, GraduationCap, Info, LogOut, Monitor, Moon, Palette, Scale, Sun, UserRound } from 'lucide-react'
+import { BookOpen, Bot, Check, GraduationCap, Info, LogOut, Monitor, Moon, Palette, Scale, Sun, UserRound } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api, json } from './api'
 import { Button, ErrorNotice, Loading, Modal } from './components'
-import { getTheme, saveTheme, type Theme } from './theme'
+import { accentOptions, getAccentColor, getTheme, saveAccentColor, saveTheme, type AccentColor, type Theme } from './theme'
 import type { Overview, User } from './types'
 import LLMSettingsPanel from './LLMSettingsPanel'
 
@@ -51,7 +51,9 @@ function StudySettings() {
 export default function SettingsDialog({ initialTab, user, logout, onClose }: { initialTab: SettingsTab; user: User; logout: () => Promise<void>; onClose: () => void }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab)
   const [theme, setTheme] = useState<Theme>(getTheme)
+  const [accent, setAccent] = useState<AccentColor>(getAccentColor)
   const chooseTheme = (choice: Theme) => { setTheme(choice); saveTheme(choice) }
+  const chooseAccent = (choice: AccentColor) => { setAccent(choice); saveAccentColor(choice) }
 
   return <Modal title="Settings" className="settings-dialog" onClose={onClose}>
     <div className="settings-intro"><p>Make Vocab Collect work the way you like.</p></div>
@@ -77,7 +79,11 @@ export default function SettingsDialog({ initialTab, user, logout, onClose }: { 
         <div className="theme-options" role="radiogroup" aria-label="Color theme">
           {([{ value: 'system', label: 'System', detail: 'Match your device', icon: Monitor }, { value: 'light', label: 'Light', detail: 'Bright and clear', icon: Sun }, { value: 'dark', label: 'Dark', detail: 'Easy on the eyes', icon: Moon }] as const).map(option => <label key={option.value} className={`theme-option ${theme === option.value ? 'selected' : ''}`}><input type="radio" name="theme" value={option.value} checked={theme === option.value} onChange={() => chooseTheme(option.value)} /><option.icon size={22} /><strong>{option.label}</strong><span>{option.detail}</span></label>)}
         </div>
-        <p className="settings-footnote">Your choice is saved in this browser.</p>
+        <div className="settings-section-heading settings-divider"><h3>Accent color</h3><p>Personalize buttons, links, and highlights.</p></div>
+        <div className="accent-options" role="radiogroup" aria-label="Accent color">
+          {accentOptions.map(option => <label key={option.value} data-accent={option.value} className={`accent-option ${accent === option.value ? 'selected' : ''}`}><input type="radio" name="accent" value={option.value} checked={accent === option.value} onChange={() => chooseAccent(option.value)} /><span className="accent-swatch" aria-hidden="true">{accent === option.value && <Check size={17} />}</span><span>{option.label}</span></label>)}
+        </div>
+        <p className="settings-footnote">Changes apply immediately and are saved in this browser.</p>
       </div>}
       {tab === 'study' && <StudySettings />}
       {tab === 'llm' && <LLMSettingsPanel userId={user.id} />}
